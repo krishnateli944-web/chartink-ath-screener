@@ -9,7 +9,16 @@ import json
 import requests
 import yfinance as yf
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Set, Optional
+from typing import List, Dict, Set, Optional, Tuple
+
+
+def safe_float(val):
+    """Safely convert value to float, return None if not possible."""
+    try:
+        return float(val) if val is not None else None
+    except (ValueError, TypeError):
+        return None
+
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -19,6 +28,7 @@ ALPHA_VANTAGE_API_KEY = os.environ.get("ALPHA_VANTAGE_API_KEY")
 
 WATCHLIST_FILE = "watchlist.txt"
 SEEN_FILE = "seen_swing_news.json"
+FULL_LIST_FILE = "swing_full_list.txt"
 TELEGRAM_MSG_LIMIT = 3500
 
 # Keywords that signal potential swing opportunities
@@ -103,6 +113,14 @@ NSE_SYMBOLS = [
     "HDFCAMC", "NIPPONAMC", "ADITYABIRLA", "UTI", "SBIMF",
     "CAMS", "KFINTECH", "LINKINTIME", "COMPUAGE", "MAHINDRAFIN"
 ]
+
+# Quality filters - avoid penny stocks, require good fundamentals
+MIN_MARKET_CAP = 5000_00_00_000    # 5000 Cr minimum
+MIN_ROE = 0.10                      # 10% minimum ROE
+MAX_DEBT_EQUITY = 1.0               # Max D/E 1.0
+MIN_PROFIT_MARGIN = 0.05            # 5% minimum profit margin
+MAX_PE = 50                         # Max PE 50 (avoid overvalued)
+MIN_PRICE = 50                      # Min price ₹50 (avoid penny stocks)
 
 
 def load_list(path: str) -> List[str]:
@@ -279,12 +297,6 @@ def analyze_swing_potential(symbol: str, news_text: str, fundamentals: Dict) -> 
     fund_score = 0
     fund_signals = []
     
-    def safe_float(val):
-        try:
-            return float(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
-    
     pe = safe_float(fundamentals.get("pe_ratio"))
     if pe is not None and pe < 25:
         fund_score += 1
@@ -411,6 +423,93 @@ def analyze_swing_potential(symbol: str, news_text: str, fundamentals: Dict) -> 
     }
 
 
+def passes_quality_filters(fundamentals: Dict) -> Tuple[bool, List[str]]:
+    """Check if stock passes quality filters (no penny stocks, good fundamentals)."""
+    reasons = []
+    
+    price = safe_float(fundamentals.get("current_price"))
+    if price is not None and price < MIN_PRICE:
+        reasons.append(f"Price ₹{price:.0f} < ₹{MIN_PRICE} (penny stock)")
+    
+    market_cap = safe_float(fundamentals.get("market_cap"))
+    if market_cap is not None and market_cap < MIN_MARKET_CAP:
+        reasons.append(f"MCap ₹{market_cap/1e7:.0f}Cr < ₹{MIN_MARKET_CAP/1e7:.0f}Cr")
+    
+    roe = safe_float(fundamentals.get("roe"))
+    if roe is not None and roe < MIN_ROE:
+        reasons.append(f"ROE {roe*100:.1f}% < {MIN_ROE*100:.0f}%")
+    
+    debt_equity = safe_float(fundamentals.get("debt_to_equity"))
+    if debt_equity is not None and debt_equity > MAX_DEBT_EQUITY:
+        reasons.append(f"D/E {debt_equity:.2f} > {MAX_DEBT_EQUITY}")
+    
+    profit_margin = safe_float(fundamentals.get("profit_margin"))
+    if profit_margin is not None and profit_margin < MIN_PROFIT_MARGIN:
+        reasons.append(f"Margin {profit_margin*100:.1f}% < {MIN_PROFIT_MARGIN*100:.0f}%")
+    
+    pe = safe_float(fundamentals.get("pe_ratio"))
+    if pe is not None and pe > MAX_PE:
+        reasons.append(f"P/E {pe:.1f} > {MAX_PE}")
+    
+    return len(reasons) == 0, reasons
+
+
+def format_analysis(analysis: Dict, news_title: str, news_source: str, quality_passed: bool = True, quality_reasons: List = None) -> str:
+    """Format analysis for Telegram - SHORT version for BUY alerts only."""
+    if quality_reasons is None:
+        quality_reasons = []
+    
+    lines = []
+    lines.append(f"{analysis['emoji']} *{analysis['symbol']}* — {analysis['recommendation']} (Score: {analysis['total_score']})")
+    lines.append(f"📰 {news_title[:80]}")
+    if analysis.get('current_price') and analysis.get('pe_ratio') and analysis.get('rsi'):
+        lines.append(f"💰 ₹{analysis['current_price']:.0f} | P/E: {analysis['pe_ratio']:.0f} | RSI: {analysis['rsi']:.0f}")
+    
+    # Key fundamental highlights only
+    key_fund = [s for s in analysis['fund_signals'] if any(k in s for k in ['PE', 'ROE', 'D/E', 'Rev'])]
+    if key_fund:
+        lines.append(f"📊 {'; '.join(key_fund[:3])}")
+    
+    # Key technical highlights only
+    key_tech = [s for s in analysis['tech_signals'] if any(k in s for k in ['RSI', 'SMA', 'Volume', '52W'])]
+    if key_tech:
+        lines.append(f"📈 {'; '.join(key_tech[:2])}")
+    
+    if not quality_passed and quality_reasons:
+        lines.append(f"⚠️ *Quality Check Failed:* {'; '.join(quality_reasons[:2])}")
+    
+    return "\n".join([l for l in lines if l])
+
+
+def format_full_analysis(analysis: Dict, news_title: str, news_source: str, quality_passed: bool = True, quality_reasons: List = None) -> str:
+    """Format detailed analysis for full list file."""
+    if quality_reasons is None:
+        quality_reasons = []
+    
+    lines = []
+    lines.append(f"{analysis['emoji']} *{analysis['symbol']}* — {analysis['recommendation']} (Score: {analysis['total_score']})")
+    lines.append(f"📰 *News:* {news_title[:120]}")
+    lines.append(f"📍 *Source:* {news_source}")
+    lines.append(f"💭 *News Sentiment:* {analysis['news_sentiment']} (Bullish: {analysis['bullish_keywords']}, Bearish: {analysis['bearish_keywords']})")
+    
+    if analysis.get("current_price"):
+        lines.append(f"💰 *Price:* ₹{analysis['current_price']:.2f}")
+    if analysis.get("pe_ratio"):
+        lines.append(f"📊 *P/E:* {analysis['pe_ratio']:.1f}")
+    if analysis.get("rsi"):
+        lines.append(f"📈 *RSI:* {analysis['rsi']:.1f}")
+    
+    if analysis["fund_signals"]:
+        lines.append(f"🏢 *Fundamentals:* {'; '.join(analysis['fund_signals'])}")
+    if analysis["tech_signals"]:
+        lines.append(f"📉 *Technicals:* {'; '.join(analysis['tech_signals'])}")
+    
+    if not quality_passed and quality_reasons:
+        lines.append(f"⚠️ *Quality Check Failed:* {'; '.join(quality_reasons)}")
+    
+    return "\n".join(lines)
+
+
 def send_telegram(message: str) -> bool:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("Telegram credentials missing")
@@ -439,29 +538,6 @@ def send_batched(lines: List[str]):
         send_telegram(chunk)
 
 
-def format_analysis(analysis: Dict, news_title: str, news_source: str) -> str:
-    """Format analysis for Telegram."""
-    lines = []
-    lines.append(f"{analysis['emoji']} *{analysis['symbol']}* — {analysis['recommendation']} (Score: {analysis['total_score']})")
-    lines.append(f"📰 *News:* {news_title[:120]}")
-    lines.append(f"📍 *Source:* {news_source}")
-    lines.append(f"💭 *News Sentiment:* {analysis['news_sentiment']} (Bullish: {analysis['bullish_keywords']}, Bearish: {analysis['bearish_keywords']})")
-    
-    if analysis.get("current_price"):
-        lines.append(f"💰 *Price:* ₹{analysis['current_price']:.2f}")
-    if analysis.get("pe_ratio"):
-        lines.append(f"📊 *P/E:* {analysis['pe_ratio']:.1f}")
-    if analysis.get("rsi"):
-        lines.append(f"📈 *RSI:* {analysis['rsi']:.1f}")
-    
-    if analysis["fund_signals"]:
-        lines.append(f"🏢 *Fundamentals:* {'; '.join(analysis['fund_signals'])}")
-    if analysis["tech_signals"]:
-        lines.append(f"📉 *Technicals:* {'; '.join(analysis['tech_signals'])}")
-    
-    return "\n".join(lines)
-
-
 def main():
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID missing")
@@ -488,7 +564,8 @@ def main():
     
     print(f"Total news items fetched: {len(all_news_items)}")
     
-    alert_lines = []
+    alert_lines = []  # Only BUY/STRONG BUY for Telegram
+    full_list_lines = []  # All analyzed stocks for file
     analyzed_symbols = set()
     
     for item in all_news_items:
@@ -523,25 +600,44 @@ def main():
                 continue
             
             analysis = analyze_swing_potential(symbol, full_text, fundamentals)
+            quality_passed, quality_reasons = passes_quality_filters(fundamentals)
             
-            # Only alert for actionable signals (BUY/SELL or watchlist stocks)
+            # Add to full list (all analyzed stocks)
+            full_formatted = format_full_analysis(analysis, title, source_name, quality_passed, quality_reasons)
+            full_list_lines.append(full_formatted)
+            
+            # Only alert for BUY/STRONG BUY that pass quality filters
+            is_buy = analysis["recommendation"] in ["STRONG BUY", "BUY"]
             is_watchlist = symbol in watchlist
-            is_actionable = analysis["recommendation"] in ["STRONG BUY", "BUY", "SELL", "STRONG SELL"]
             
-            if is_actionable or is_watchlist:
-                formatted = format_analysis(analysis, title, source_name)
+            if is_buy and quality_passed:
+                formatted = format_analysis(analysis, title, source_name, quality_passed, quality_reasons)
                 if is_watchlist:
                     formatted = f"⭐ *WATCHLIST STOCK*\n{formatted}"
                 alert_lines.append(formatted)
-                print(f"  -> {analysis['recommendation']} (Score: {analysis['total_score']})")
+                print(f"  -> {analysis['recommendation']} (Score: {analysis['total_score']}) ✓ QUALITY PASS")
+            elif is_buy and not quality_passed:
+                print(f"  -> {analysis['recommendation']} (Score: {analysis['total_score']}) ✗ QUALITY FAIL: {'; '.join(quality_reasons[:2])}")
+            elif is_watchlist:
+                # Watchlist stocks still get full analysis in file
+                print(f"  -> {analysis['recommendation']} (Score: {analysis['total_score']}) [WATCHLIST]")
     
     save_seen(seen)
     
+    # Send BUY alerts to Telegram
     if alert_lines:
         send_batched(alert_lines)
-        print(f"Sent {len(alert_lines)} swing alerts to Telegram")
+        print(f"Sent {len(alert_lines)} BUY alerts to Telegram")
     else:
-        print("No actionable swing signals this run")
+        print("No quality BUY signals this run")
+    
+    # Save full list to file
+    if full_list_lines:
+        header = f"Swing Trade Full Analysis — {datetime.now(IST).strftime('%d-%b-%Y %H:%M')} IST\n"
+        header += "=" * 60 + "\n\n"
+        with open(FULL_LIST_FILE, "w") as f:
+            f.write(header + "\n\n---\n\n".join(full_list_lines))
+        print(f"Full analysis saved to {FULL_LIST_FILE} ({len(full_list_lines)} stocks)")
 
 
 if __name__ == "__main__":
