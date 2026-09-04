@@ -1,17 +1,74 @@
 #!/usr/bin/env python3
 """
-Chartink All-Time High (ATH) Screener - Using Playwright for JS rendering
+Chartink All-Time High (ATH) Screener - Using direct API call
 """
 
 import os
 import asyncio
 import json
+import requests
 from datetime import datetime
 import telegram
 
 SCREENER_URL = "https://chartink.com/screener/all-time-high-100000513"
+SCAN_API_URL = "https://chartink.com/backtest/process"
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+
+def fetch_stocks_api():
+    """Fetch stocks using Chartink's scan API."""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Origin': 'https://chartink.com',
+            'Referer': SCREENER_URL,
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+        }
+        
+        session = requests.Session()
+        # Get the page first to establish session/cookies and get CSRF token
+        resp = session.get(SCREENER_URL, headers=headers, timeout=30)
+        
+        # Get CSRF token from cookies or meta tag
+        csrf_token = session.cookies.get('XSRF-TOKEN') or session.cookies.get('csrftoken')
+        
+        # Also try to extract from page
+        if not csrf_token:
+            import re
+            csrf_match = re.search(r'name="csrf-token" content="([^"]+)"', resp.text)
+            if csrf_match:
+                csrf_token = csrf_match.group(1)
+        
+        if csrf_token:
+            headers['X-CSRF-TOKEN'] = csrf_token
+        
+        # The scan clause for ATH - close equals 52-week high
+        scan_clause = "close = max(high, 252) and close > 0"
+        data = {
+            'scan_clause': scan_clause,
+            'timeframe': 'daily',
+        }
+        
+        resp = session.post(SCAN_API_URL, headers=headers, data=data, timeout=60)
+        
+        if resp.status_code == 200:
+            result = resp.json()
+            return result.get('data', [])
+        
+        # Try alternative endpoint
+        alt_url = "https://chartink.com/screener/process"
+        resp = session.post(alt_url, headers=headers, data=data, timeout=60)
+        if resp.status_code == 200:
+            result = resp.json()
+            return result.get('data', [])
+        
+    except Exception as e:
+        print(f"API error: {e}")
+    
+    return []
 
 
 async def fetch_stocks_playwright():
@@ -19,11 +76,8 @@ async def fetch_stocks_playwright():
     try:
         from playwright.async_api import async_playwright
     except ImportError:
-        print("Playwright not installed, installing...")
-        import subprocess
-        subprocess.run(["pip", "install", "playwright"], check=True)
-        subprocess.run(["playwright", "install", "chromium"], check=True)
-        from playwright.async_api import async_playwright
+        print("Playwright not installed")
+        return []
     
     stocks = []
     
@@ -35,22 +89,22 @@ async def fetch_stocks_playwright():
             # Navigate to screener
             await page.goto(SCREENER_URL, wait_until="networkidle", timeout=60000)
             
-            # Wait for the table to appear
-            await page.wait_for_selector("table tbody", timeout=30000)
+            # Wait for the table
+            await page.wait_for_selector("table", timeout=30000)
             
-            # Wait for data rows to populate - wait for at least one row with data
+            # Wait for data to load - check for rows with actual content
             await page.wait_for_function(
                 """() => {
                     const rows = document.querySelectorAll('table tbody tr');
-                    return rows.length > 0 && rows[0].innerText.trim().length > 0;
+                    return rows.length > 0 && rows[0].querySelector('td') !== null;
                 }""",
                 timeout=60000
             )
             
             # Additional wait for full data load
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(5000)
             
-            # Extract stock data from the table
+            # Extract stock data
             rows = await page.query_selector_all("table tbody tr")
             
             for row in rows:
@@ -89,47 +143,6 @@ async def fetch_stocks_playwright():
     return stocks
 
 
-def fetch_stocks_api():
-    """Try Chartink's backtest API endpoint."""
-    import requests
-    
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'X-Requested-With': 'XMLHttpRequest',
-            'Origin': 'https://chartink.com',
-            'Referer': SCREENER_URL,
-        }
-        
-        session = requests.Session()
-        # Get the page first to establish session/cookies
-        resp = session.get(SCREENER_URL, headers=headers, timeout=30)
-        
-        # Look for CSRF token
-        csrf_token = session.cookies.get('XSRF-TOKEN') or session.cookies.get('csrftoken')
-        if csrf_token:
-            headers['X-CSRF-TOKEN'] = csrf_token
-        
-        # Try the scan API
-        scan_clause = "close = max(high, 252) and close > 0"
-        data = {
-            'scan_clause': scan_clause,
-            'timeframe': 'daily',
-        }
-        
-        resp = session.post("https://chartink.com/backtest/process", headers=headers, data=data, timeout=30)
-        
-        if resp.status_code == 200:
-            result = resp.json()
-            return result.get('data', [])
-        
-    except Exception as e:
-        print(f"API error: {e}")
-    
-    return []
-
-
 def format_message(stocks):
     """Format the stock list for Telegram message."""
     date_str = datetime.now().strftime("%d %b %Y, %I:%M %p IST")
@@ -154,7 +167,11 @@ def format_message(stocks):
         change = stock.get('change_pct', 'N/A')
         volume = stock.get('volume', 'N/A')
         
-        change_emoji = "🟢" if change and change.replace('%', '').replace('+', '').replace('-', '').replace('.', '').isdigit() and float(change.replace('%', '').replace('+', '') or '0') >= 0 else "🔴"
+        change_val = change.replace('%', '').replace('+', '').replace('-', '')
+        try:
+            change_emoji = "🟢" if float(change_val or '0') >= 0 else "🔴"
+        except:
+            change_emoji = "🔴"
         
         message += f"**{i}. {name} ({symbol})**\n"
         message += f"   💰 ₹{close} | {change_emoji} {change} | 📊 Vol: {volume}\n\n"
@@ -202,6 +219,7 @@ async def main():
     
     # Try API first
     stocks = fetch_stocks_api()
+    print(f"API returned {len(stocks)} stocks")
     
     # If API fails, use Playwright
     if not stocks:
