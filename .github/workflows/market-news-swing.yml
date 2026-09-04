@@ -1,0 +1,39 @@
+name: Market News Swing Analysis
+
+on:
+  schedule:
+    - cron: '*/20 3-12 * * 1-5'  # Every 20 min during market hours (Mon-Fri)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  analyze-news:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install yfinance requests python-dotenv
+
+      - name: Run swing news analyzer
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+        run: python swing_news_analyzer.py
+
+      - name: Commit state files
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add seen_swing_news.json watchlist.txt 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "update swing news state [skip ci]"
+          git push

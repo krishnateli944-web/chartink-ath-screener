@@ -1,0 +1,12 @@
+# Add your NSE symbols for swing tracking (one per line)
+# Example:
+# RELIANCE
+# TCS
+# SONACOMS
+# JSWINFRA
+# LAURUSLABS
+# TVSMOTOR
+# DIVISLAB
+# KALYANJWL
+# OFSS
+# RRKABEL
