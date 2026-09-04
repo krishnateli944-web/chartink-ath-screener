@@ -9,7 +9,7 @@ import yfinance as yf
 from datetime import datetime
 import telegram
 
-# Major NSE stock symbols that work with yfinance
+# Major NSE stock symbols that work with yfinance (verified working symbols)
 NSE_SYMBOLS = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS",
     "HINDUNILVR.NS", "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "KOTAKBANK.NS",
@@ -21,7 +21,7 @@ NSE_SYMBOLS = [
     "EICHERMOT.NS", "HEROMOTOCO.NS", "BAJAJ-AUTO.NS", "TECHM.NS", "UPL.NS",
     "SHREECEM.NS", "DIVISLAB.NS", "BPCL.NS", "IOC.NS", "GAIL.NS",
     "HINDALCO.NS", "VEDL.NS", "TATACONSUM.NS", "M&M.NS", "SBILIFE.NS",
-    "ADANIENT.NS", "ADANIPORTS.NS", "TATAMOTORS.NS", "HDFCLIFE.NS", "TATAPOWER.NS",
+    "ADANIENT.NS", "ADANIPORTS.NS", "HDFCLIFE.NS", "TATAPOWER.NS",
 ]
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
