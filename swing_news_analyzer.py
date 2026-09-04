@@ -279,35 +279,41 @@ def analyze_swing_potential(symbol: str, news_text: str, fundamentals: Dict) -> 
     fund_score = 0
     fund_signals = []
     
-    pe = fundamentals.get("pe_ratio")
-    if pe and pe < 25:
+    def safe_float(val):
+        try:
+            return float(val) if val is not None else None
+        except (ValueError, TypeError):
+            return None
+    
+    pe = safe_float(fundamentals.get("pe_ratio"))
+    if pe is not None and pe < 25:
         fund_score += 1
         fund_signals.append(f"PE: {pe:.1f} (attractive)")
-    elif pe and pe > 40:
+    elif pe is not None and pe > 40:
         fund_score -= 1
         fund_signals.append(f"PE: {pe:.1f} (expensive)")
     
-    roe = fundamentals.get("roe")
-    if roe and roe > 0.15:
+    roe = safe_float(fundamentals.get("roe"))
+    if roe is not None and roe > 0.15:
         fund_score += 1
         fund_signals.append(f"ROE: {roe*100:.1f}% (strong)")
-    elif roe and roe < 0.05:
+    elif roe is not None and roe < 0.05:
         fund_score -= 1
         fund_signals.append(f"ROE: {roe*100:.1f}% (weak)")
     
-    debt_equity = fundamentals.get("debt_to_equity")
-    if debt_equity and debt_equity < 0.5:
+    debt_equity = safe_float(fundamentals.get("debt_to_equity"))
+    if debt_equity is not None and debt_equity < 0.5:
         fund_score += 1
         fund_signals.append(f"D/E: {debt_equity:.2f} (low debt)")
-    elif debt_equity and debt_equity > 2:
+    elif debt_equity is not None and debt_equity > 2:
         fund_score -= 1
         fund_signals.append(f"D/E: {debt_equity:.2f} (high debt)")
     
-    rev_growth = fundamentals.get("revenue_growth")
-    if rev_growth and rev_growth > 0.1:
+    rev_growth = safe_float(fundamentals.get("revenue_growth"))
+    if rev_growth is not None and rev_growth > 0.1:
         fund_score += 1
         fund_signals.append(f"Rev Growth: {rev_growth*100:.1f}%")
-    elif rev_growth and rev_growth < -0.05:
+    elif rev_growth is not None and rev_growth < -0.05:
         fund_score -= 1
         fund_signals.append(f"Rev Growth: {rev_growth*100:.1f}% (declining)")
     
@@ -399,9 +405,9 @@ def analyze_swing_potential(symbol: str, news_text: str, fundamentals: Dict) -> 
         "fund_signals": fund_signals,
         "tech_score": tech_score,
         "tech_signals": tech_signals,
-        "current_price": fundamentals.get("current_price"),
-        "pe_ratio": fundamentals.get("pe_ratio"),
-        "rsi": fundamentals.get("rsi"),
+        "current_price": safe_float(fundamentals.get("current_price")),
+        "pe_ratio": safe_float(fundamentals.get("pe_ratio")),
+        "rsi": safe_float(fundamentals.get("rsi")),
     }
 
 
