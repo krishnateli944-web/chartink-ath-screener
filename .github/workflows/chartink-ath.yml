@@ -2,7 +2,7 @@ name: Chartink ATH Screener
 
 on:
   schedule:
-    - cron: '0 9 * * 1-5'  # Run at 9 AM UTC (2:30 PM IST) on weekdays
+    - cron: '*/20 * * * *'  # Run every 20 minutes
   workflow_dispatch:  # Allow manual trigger
 
 jobs:
