@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Chartink All-Time High (ATH) Screener - Using NSE data via yfinance
+NSE All-Time High (ATH) Screener - Using yfinance for reliable data
 """
 
 import os
@@ -9,18 +9,19 @@ import yfinance as yf
 from datetime import datetime
 import telegram
 
-# NSE stock symbols (major ones)
+# Major NSE stock symbols that work with yfinance
 NSE_SYMBOLS = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS",
     "HINDUNILVR.NS", "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "KOTAKBANK.NS",
     "LT.NS", "ASIANPAINT.NS", "AXISBANK.NS", "MARUTI.NS", "SUNPHARMA.NS",
     "TITAN.NS", "ULTRACEMCO.NS", "WIPRO.NS", "NESTLEIND.NS", "POWERGRID.NS",
-    "NTPC.NS", "TATAMOTORS.NS", "BAJFINANCE.NS", "HCLTECH.NS", "JSWSTEEL.NS",
-    "ADANIENT.NS", "ADANIPORTS.NS", "COALINDIA.NS", "ONGC.NS", "TATASTEEL.NS",
+    "NTPC.NS", "BAJFINANCE.NS", "HCLTECH.NS", "JSWSTEEL.NS",
+    "COALINDIA.NS", "ONGC.NS", "TATASTEEL.NS",
     "INDUSINDBK.NS", "GRASIM.NS", "BRITANNIA.NS", "CIPLA.NS", "DRREDDY.NS",
     "EICHERMOT.NS", "HEROMOTOCO.NS", "BAJAJ-AUTO.NS", "TECHM.NS", "UPL.NS",
     "SHREECEM.NS", "DIVISLAB.NS", "BPCL.NS", "IOC.NS", "GAIL.NS",
     "HINDALCO.NS", "VEDL.NS", "TATACONSUM.NS", "M&M.NS", "SBILIFE.NS",
+    "ADANIENT.NS", "ADANIPORTS.NS", "TATAMOTORS.NS", "HDFCLIFE.NS", "TATAPOWER.NS",
 ]
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -34,17 +35,19 @@ def fetch_ath_stocks_yfinance():
     for symbol in NSE_SYMBOLS:
         try:
             ticker = yf.Ticker(symbol)
-            hist = ticker.history(period="1y")  # 1 year data
+            # Get 1 year of data
+            hist = ticker.history(period="1y")
             
-            if hist.empty:
+            if hist.empty or len(hist) < 2:
                 continue
             
             current_price = hist['Close'].iloc[-1]
             high_52w = hist['High'].max()
             
-            # Check if current price is at or near 52-week high (within 2%)
-            if current_price >= high_52w * 0.98:
-                change_pct = ((current_price - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2]) * 100 if len(hist) > 1 else 0
+            # Check if current price is at or near 52-week high (within 3%)
+            if current_price >= high_52w * 0.97:
+                prev_close = hist['Close'].iloc[-2]
+                change_pct = ((current_price - prev_close) / prev_close) * 100
                 volume = hist['Volume'].iloc[-1]
                 
                 # Get company name
@@ -56,14 +59,14 @@ def fetch_ath_stocks_yfinance():
                     'name': name,
                     'close': round(current_price, 2),
                     'change_pct': f"{change_pct:+.2f}%",
-                    'volume': f"{volume:,.0f}",
+                    'volume': f"{int(volume):,}",
                     'high_52w': round(high_52w, 2),
                 })
                 
         except Exception as e:
             continue
     
-    # Sort by how close to 52-week high
+    # Sort by how close to 52-week high (closest first)
     ath_stocks.sort(key=lambda x: x['close'] / x['high_52w'], reverse=True)
     
     return ath_stocks
@@ -75,13 +78,13 @@ def format_message(stocks):
     
     if not stocks:
         return (
-            f"📊 **ATH Screener (NSE - yfinance)**\n"
+            f"📊 **NSE ATH Screener (yfinance)**\n"
             f"📅 {date_str}\n\n"
             f"No stocks found near All-Time High today.\n\n"
             f"#ATH #AllTimeHigh #NSE #StockMarket"
         )
     
-    message = f"📊 **ATH Screener - Stocks Near 52-Week High (NSE)**\n"
+    message = f"📊 **NSE ATH Screener - Stocks Near 52-Week High**\n"
     message += f"📅 {date_str}\n\n"
     
     for i, stock in enumerate(stocks[:25], 1):
