@@ -35,11 +35,20 @@ async def fetch_stocks_playwright():
             # Navigate to screener
             await page.goto(SCREENER_URL, wait_until="networkidle", timeout=60000)
             
-            # Wait for the stock table to load
-            await page.wait_for_selector("table", timeout=30000)
+            # Wait for the table to appear
+            await page.wait_for_selector("table tbody", timeout=30000)
             
-            # Wait a bit more for data to populate
-            await page.wait_for_timeout(5000)
+            # Wait for data rows to populate - wait for at least one row with data
+            await page.wait_for_function(
+                """() => {
+                    const rows = document.querySelectorAll('table tbody tr');
+                    return rows.length > 0 && rows[0].innerText.trim().length > 0;
+                }""",
+                timeout=60000
+            )
+            
+            # Additional wait for full data load
+            await page.wait_for_timeout(3000)
             
             # Extract stock data from the table
             rows = await page.query_selector_all("table tbody tr")
