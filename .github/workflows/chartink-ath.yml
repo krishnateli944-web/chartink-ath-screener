@@ -19,7 +19,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install requests python-telegram-bot
+          pip install yfinance python-telegram-bot
 
       - name: Run ATH Screener
         env:

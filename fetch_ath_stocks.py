@@ -1,107 +1,72 @@
 #!/usr/bin/env python3
 """
-Chartink All-Time High (ATH) Screener - Simple approach using requests with proper headers
+Chartink All-Time High (ATH) Screener - Using NSE data via yfinance
 """
 
 import os
 import json
-import requests
+import yfinance as yf
 from datetime import datetime
 import telegram
 
-SCREENER_URL = "https://chartink.com/screener/all-time-high-100000513"
-SCAN_API_URL = "https://chartink.com/backtest/process"
+# NSE stock symbols (major ones)
+NSE_SYMBOLS = [
+    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS",
+    "HINDUNILVR.NS", "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "KOTAKBANK.NS",
+    "LT.NS", "ASIANPAINT.NS", "AXISBANK.NS", "MARUTI.NS", "SUNPHARMA.NS",
+    "TITAN.NS", "ULTRACEMCO.NS", "WIPRO.NS", "NESTLEIND.NS", "POWERGRID.NS",
+    "NTPC.NS", "TATAMOTORS.NS", "BAJFINANCE.NS", "HCLTECH.NS", "JSWSTEEL.NS",
+    "ADANIENT.NS", "ADANIPORTS.NS", "COALINDIA.NS", "ONGC.NS", "TATASTEEL.NS",
+    "INDUSINDBK.NS", "GRASIM.NS", "BRITANNIA.NS", "CIPLA.NS", "DRREDDY.NS",
+    "EICHERMOT.NS", "HEROMOTOCO.NS", "BAJAJ-AUTO.NS", "TECHM.NS", "UPL.NS",
+    "SHREECEM.NS", "DIVISLAB.NS", "BPCL.NS", "IOC.NS", "GAIL.NS",
+    "HINDALCO.NS", "VEDL.NS", "TATACONSUM.NS", "M&M.NS", "SBILIFE.NS",
+]
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 
-def fetch_stocks():
-    """Fetch stocks using Chartink's scan API with proper session handling."""
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'X-Requested-With': 'XMLHttpRequest',
-            'Origin': 'https://chartink.com',
-            'Referer': SCREENER_URL,
-            'Accept': 'application/json, text/javascript, */*; q=0.01',
-            'Accept-Language': 'en-US,en;q=0.9',
-        }
-        
-        session = requests.Session()
-        session.headers.update(headers)
-        
-        # First GET request to get cookies and CSRF token
-        resp = session.get(SCREENER_URL, timeout=30)
-        
-        # Get CSRF token from cookies
-        csrf_token = session.cookies.get('XSRF-TOKEN') or session.cookies.get('csrftoken')
-        
-        # Also try meta tag
-        if not csrf_token:
-            import re
-            csrf_match = re.search(r'name="csrf-token" content="([^"]+)"', resp.text)
-            if csrf_match:
-                csrf_token = csrf_match.group(1)
-        
-        # Try X-CSRF-TOKEN header
-        if csrf_token:
-            session.headers['X-CSRF-TOKEN'] = csrf_token
-        
-        # The scan clause - try different variations
-        scan_clauses = [
-            "close = max(high, 252) and close > 0",
-            "close >= max(high, 252) and close > 0",
-            "close > ref(close, 1) and close = max(high, 252)",
-        ]
-        
-        for scan_clause in scan_clauses:
-            data = {
-                'scan_clause': scan_clause,
-                'timeframe': 'daily',
-            }
-            
-            resp = session.post(SCAN_API_URL, data=data, timeout=60)
-            
-            if resp.status_code == 200:
-                try:
-                    result = resp.json()
-                    stocks = result.get('data', [])
-                    if stocks:
-                        print(f"Success with clause: {scan_clause}")
-                        return stocks
-                except:
-                    pass
-            
-            # Try alternative endpoint
-            alt_url = "https://chartink.com/screener/process"
-            resp = session.post(alt_url, data=data, timeout=60)
-            if resp.status_code == 200:
-                try:
-                    result = resp.json()
-                    stocks = result.get('data', [])
-                    if stocks:
-                        print(f"Success with alt endpoint and clause: {scan_clause}")
-                        return stocks
-                except:
-                    pass
-        
-        # If all fail, try to get data from the page HTML (it might have embedded data)
-        # Check for data in script tags
-        import re
-        # Look for stock data in the page
-        stock_data_match = re.search(r'var\s+stockData\s*=\s*(\[.*?\]);', resp.text, re.DOTALL)
-        if stock_data_match:
-            try:
-                stocks = json.loads(stock_data_match.group(1))
-                return stocks
-            except:
-                pass
-        
-    except Exception as e:
-        print(f"Error: {e}")
+def fetch_ath_stocks_yfinance():
+    """Find stocks at/near all-time high using yfinance."""
+    ath_stocks = []
     
-    return []
+    for symbol in NSE_SYMBOLS:
+        try:
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(period="1y")  # 1 year data
+            
+            if hist.empty:
+                continue
+            
+            current_price = hist['Close'].iloc[-1]
+            high_52w = hist['High'].max()
+            
+            # Check if current price is at or near 52-week high (within 2%)
+            if current_price >= high_52w * 0.98:
+                change_pct = ((current_price - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2]) * 100 if len(hist) > 1 else 0
+                volume = hist['Volume'].iloc[-1]
+                
+                # Get company name
+                info = ticker.info
+                name = info.get('longName', info.get('shortName', symbol.replace('.NS', '')))
+                
+                ath_stocks.append({
+                    'symbol': symbol.replace('.NS', ''),
+                    'name': name,
+                    'close': round(current_price, 2),
+                    'change_pct': f"{change_pct:+.2f}%",
+                    'volume': f"{volume:,.0f}",
+                    'high_52w': round(high_52w, 2),
+                })
+                
+        except Exception as e:
+            continue
+    
+    # Sort by how close to 52-week high
+    ath_stocks.sort(key=lambda x: x['close'] / x['high_52w'], reverse=True)
+    
+    return ath_stocks
 
 
 def format_message(stocks):
@@ -110,32 +75,22 @@ def format_message(stocks):
     
     if not stocks:
         return (
-            f"📊 **Chartink ATH Screener**\n"
+            f"📊 **ATH Screener (NSE - yfinance)**\n"
             f"📅 {date_str}\n\n"
-            f"No stocks found at All-Time High today.\n\n"
-            f"🔗 [View on Chartink]({SCREENER_URL})\n"
-            f"#ATH #AllTimeHigh #Chartink #StockMarket #NSE"
+            f"No stocks found near All-Time High today.\n\n"
+            f"#ATH #AllTimeHigh #NSE #StockMarket"
         )
     
-    message = f"📊 **Chartink ATH Screener - All Time High Stocks**\n"
-    message += f"📅 {date_str}\n"
-    message += f"🔗 [View on Chartink]({SCREENER_URL})\n\n"
+    message = f"📊 **ATH Screener - Stocks Near 52-Week High (NSE)**\n"
+    message += f"📅 {date_str}\n\n"
     
     for i, stock in enumerate(stocks[:25], 1):
-        # Handle different possible data structures
-        if isinstance(stock, dict):
-            name = stock.get('nsecode', stock.get('name', stock.get('symbol', 'N/A')))
-            symbol = stock.get('symbol', stock.get('nsecode', 'N/A'))
-            close = stock.get('close', stock.get('price', 'N/A'))
-            change = stock.get('per_chg', stock.get('change_pct', 'N/A'))
-            volume = stock.get('volume', 'N/A')
-        else:
-            # If it's a list/array
-            symbol = str(stock[0]) if len(stock) > 0 else 'N/A'
-            name = str(stock[1]) if len(stock) > 1 else 'N/A'
-            close = str(stock[2]) if len(stock) > 2 else 'N/A'
-            change = str(stock[3]) if len(stock) > 3 else 'N/A'
-            volume = str(stock[4]) if len(stock) > 4 else 'N/A'
+        name = stock.get('name', 'N/A')
+        symbol = stock.get('symbol', 'N/A')
+        close = stock.get('close', 'N/A')
+        change = stock.get('change_pct', 'N/A')
+        volume = stock.get('volume', 'N/A')
+        high_52w = stock.get('high_52w', 'N/A')
         
         change_val = str(change).replace('%', '').replace('+', '').replace('-', '')
         try:
@@ -143,13 +98,17 @@ def format_message(stocks):
         except:
             change_emoji = "🔴"
         
+        # Calculate % from 52w high
+        from_high = ((high_52w - close) / high_52w) * 100
+        
         message += f"**{i}. {name} ({symbol})**\n"
-        message += f"   💰 ₹{close} | {change_emoji} {change} | 📊 Vol: {volume}\n\n"
+        message += f"   💰 ₹{close} | {change_emoji} {change} | 📊 Vol: {volume}\n"
+        message += f"   📈 52W High: ₹{high_52w} ({from_high:.1f}% away)\n\n"
     
     if len(stocks) > 25:
         message += f"... and {len(stocks) - 25} more stocks.\n"
     
-    message += "\n#ATH #AllTimeHigh #Chartink #StockMarket #NSE"
+    message += "\n#ATH #AllTimeHigh #NSE #StockMarket #yfinance"
     return message
 
 
@@ -185,18 +144,15 @@ def save_results(stocks):
 
 
 async def main():
-    print("🔍 Fetching Chartink ATH stocks...")
+    print("🔍 Fetching ATH stocks via yfinance...")
     
-    stocks = fetch_stocks()
+    stocks = fetch_ath_stocks_yfinance()
     
-    print(f"✅ Found {len(stocks)} stocks")
+    print(f"✅ Found {len(stocks)} stocks near 52-week high")
     
     if stocks:
         for s in stocks[:5]:
-            if isinstance(s, dict):
-                print(f"  - {s.get('symbol', s.get('nsecode', 'N/A'))}: {s.get('name', 'N/A')} @ ₹{s.get('close', 'N/A')}")
-            else:
-                print(f"  - {s}")
+            print(f"  - {s['symbol']}: {s['name']} @ ₹{s['close']} ({s['change_pct']}) - 52W High: ₹{s['high_52w']}")
     
     message = format_message(stocks)
     save_results(stocks)
