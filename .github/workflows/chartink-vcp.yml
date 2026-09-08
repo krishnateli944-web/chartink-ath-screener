@@ -1,0 +1,39 @@
+name: Chartink VCP Screener
+
+on:
+  schedule:
+    - cron: '0 */2 4-9 * * 1-5'  # Every 2 hours during market hours (4-9 UTC = 9:30-15:30 IST)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  vcp-screen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install yfinance requests python-dotenv
+
+      - name: Run Chartink VCP Screener
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
+        run: python chartink_vcp_screener.py
+
+      - name: Commit state files
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add seen_vcp_alerts.json chartink_symbols.json 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "update VCP screener state [skip ci]"
+          git push
