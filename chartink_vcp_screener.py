@@ -427,12 +427,34 @@ def analyze_stock(symbol: str) -> Optional[Dict]:
 def format_telegram(result: Dict) -> str:
     vcp = result['vcp']
     fs = result['fund_snapshot']
+    confidence_emoji = "🟢🟢" if result['confidence'] == 'HIGH' else "🟢"
+    
     lines = []
-    lines.append(f"{'🟢🟢' if result['confidence']=='HIGH' else '🟢'} *{result['symbol']}* — {result['confidence']}")
-    lines.append(f"📰 Chartink screener hit")
-    lines.append(f"💰 ₹{result['current_price']:.0f} | Pivot: ₹{result['pivot']:.0f} | SL: ₹{result['stop_loss']:.0f}")
-    lines.append(f"📊 EPS: {fs.get('eps_growth',0)*100:.0f}% | Sales: {fs.get('sales_growth',0)*100:.0f}% | ROE: {fs.get('roe',0)*100:.0f}% | D/E: {fs.get('debt_to_equity',0):.2f}")
-    lines.append(f"📈 VCP: {vcp['num_contractions']} contractions, {vcp['base_weeks']:.1f}w base, {vcp['stage']}")
+    lines.append(f"{confidence_emoji} *{result['symbol']}* — {result['confidence']} CONFIDENCE")
+    lines.append("")
+    lines.append(f"📊 *Chartink Screener Hit*")
+    lines.append("")
+    lines.append(f"💰 *Current Price:* ₹{result['current_price']:,.0f}")
+    lines.append(f"🎯 *Entry (Pivot):* ₹{result['pivot']:,.0f}")
+    lines.append(f"🛑 *Stop Loss:* ₹{result['stop_loss']:,.0f}")
+    lines.append("")
+    lines.append(f"📈 *VCP Pattern:*")
+    lines.append(f"   • {vcp['num_contractions']} Contractions")
+    lines.append(f"   • Sequential: {'✅ Haan' if vcp['sequential'] else '❌ Nahi'}")
+    lines.append(f"   • Volume Dry Up: {'✅ Haan' if vcp['vol_drying'] else '❌ Nahi'}")
+    lines.append(f"   • Base Duration: {vcp['base_weeks']:.1f} weeks")
+    lines.append(f"   • Stage: {vcp['stage']}")
+    lines.append("")
+    lines.append(f"🏢 *Fundamentals:*")
+    lines.append(f"   • EPS Growth: {fs.get('eps_growth',0)*100:.1f}% {'✅' if fs.get('eps_growth',0) >= 0.20 else '❌'}")
+    lines.append(f"   • Sales Growth: {fs.get('sales_growth',0)*100:.1f}% {'✅' if fs.get('sales_growth',0) >= 0.20 else '❌'}")
+    lines.append(f"   • ROE: {fs.get('roe',0)*100:.1f}% {'✅' if fs.get('roe',0) >= 0.15 else '❌'}")
+    lines.append(f"   • D/E: {fs.get('debt_to_equity',0):.2f} {'✅' if fs.get('debt_to_equity',0) <= 1.0 else '❌'}")
+    lines.append(f"   • Margin: {fs.get('profit_margin',0)*100:.1f}%")
+    lines.append("")
+    lines.append(f"📅 *Time:* {datetime.now(IST).strftime('%d-%b-%Y %H:%M')} IST")
+    lines.append(f"#VCP #SwingTrade #Chartink #NSE")
+    
     return "\n".join(lines)
 
 
